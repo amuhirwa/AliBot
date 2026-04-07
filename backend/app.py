@@ -100,6 +100,7 @@ class SearchRequest(BaseModel):
     negative_keywords: list[str] = ["case", "cable", "cover", "box", "empty"]
     min_sales: int = Field(10, ge=0)
     price_floor_pct: float = Field(30.0, ge=0, le=100)
+    num_pages: int = Field(1, ge=1, le=10)
     w_rating: float = Field(20.0, ge=0, le=100)
     w_sales: float = Field(25.0, ge=0, le=100)
     w_reviews: float = Field(15.0, ge=0, le=100)
@@ -153,6 +154,7 @@ async def run_pipeline(job_id: str, req: SearchRequest):
                 req.min_sales,
                 req.price_floor_pct,
                 progress_cb,
+                req.num_pages,
             ),
         )
 
