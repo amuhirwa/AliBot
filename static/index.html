@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AliBot — AliExpress Product Ranker</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+<!-- ===== AUTH BANNER ===== -->
+<div id="auth-banner" class="auth-banner auth-unknown">
+  <div class="auth-banner-inner">
+    <span id="auth-status-text">Checking session...</span>
+    <button id="auth-btn" class="btn btn-sm">Authenticate</button>
+  </div>
+</div>
+
+<!-- ===== AUTH MODAL ===== -->
+<div id="auth-modal" class="modal-overlay hidden">
+  <div class="modal">
+    <h3>AliExpress Authentication</h3>
+    <p>A Playwright browser is opening on your machine.</p>
+    <ol>
+      <li>Log into your AliExpress account if prompted.</li>
+      <li>Make sure your shipping country and currency are correct.</li>
+      <li>Solve any captchas that appear.</li>
+      <li>Click <strong>Done</strong> below when you're finished.</li>
+    </ol>
+    <div id="auth-log" class="auth-log"></div>
+    <div class="modal-actions">
+      <button id="auth-done-btn" class="btn btn-primary">Done — Save Session</button>
+      <button id="auth-cancel-btn" class="btn btn-ghost">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MAIN LAYOUT ===== -->
+<div class="container">
+  <header class="site-header">
+    <h1>AliBot</h1>
+    <p class="subtitle">AliExpress Product Ranker</p>
+  </header>
+
+  <!-- ===== SEARCH FORM ===== -->
+  <section class="card search-card">
+    <form id="search-form">
+      <div class="search-row">
+        <input
+          id="search-term"
+          type="text"
+          placeholder="e.g. arduino starter kit"
+          required
+          autocomplete="off"
+        />
+        <button type="submit" id="run-btn" class="btn btn-primary" disabled>
+          Run Search
+        </button>
+      </div>
+
+      <details id="advanced-section">
+        <summary>Advanced Settings</summary>
+        <div class="advanced-grid">
+
+          <!-- Filters -->
+          <div class="adv-group">
+            <h4>Filters</h4>
+            <label>
+              Negative Keywords
+              <span class="hint">(comma-separated — products containing these words are excluded)</span>
+              <input id="neg-keywords" type="text" value="case,cable,cover,box,empty" />
+            </label>
+            <div class="row-2">
+              <label>
+                Min Sales
+                <input id="min-sales" type="number" value="10" min="0" />
+              </label>
+              <label>
+                Price Floor %
+                <span class="hint">(drop items below X% of median price)</span>
+                <input id="price-floor" type="number" value="30" min="0" max="100" />
+              </label>
+            </div>
+          </div>
+
+          <!-- Scoring weights -->
+          <div class="adv-group">
+            <h4>
+              Scoring Weights
+              <span id="weight-total-badge" class="weight-badge weight-ok">Total: 100%</span>
+            </h4>
+            <div class="weight-row">
+              <label>Rating</label>
+              <input id="w-rating" type="range" min="0" max="100" value="20" />
+              <input id="w-rating-num" type="number" min="0" max="100" value="20" class="weight-num" />
+              <span>%</span>
+            </div>
+            <div class="weight-row">
+              <label>Sales Volume</label>
+              <input id="w-sales" type="range" min="0" max="100" value="25" />
+              <input id="w-sales-num" type="number" min="0" max="100" value="25" class="weight-num" />
+              <span>%</span>
+            </div>
+            <div class="weight-row">
+              <label>Review Count</label>
+              <input id="w-reviews" type="range" min="0" max="100" value="15" />
+              <input id="w-reviews-num" type="number" min="0" max="100" value="15" class="weight-num" />
+              <span>%</span>
+            </div>
+            <div class="weight-row">
+              <label>Price</label>
+              <input id="w-price" type="range" min="0" max="100" value="40" />
+              <input id="w-price-num" type="number" min="0" max="100" value="40" class="weight-num" />
+              <span>%</span>
+            </div>
+            <button type="button" id="auto-balance-btn" class="btn btn-sm btn-ghost">Auto-balance</button>
+            <p id="weight-warn" class="weight-warn hidden">Weights must sum to 100%</p>
+          </div>
+
+          <!-- Extra metrics -->
+          <div class="adv-group">
+            <h4>Extra Metrics <span class="hint">(slower — requires additional page parsing)</span></h4>
+            <label class="checkbox-label">
+              <input type="checkbox" id="inc-seller" />
+              Seller Positive Feedback Score
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="inc-shipping" />
+              Estimated Shipping Time
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="inc-choice" />
+              AliExpress Choice Badge
+            </label>
+          </div>
+
+        </div>
+      </details>
+    </form>
+  </section>
+
+  <!-- ===== PROGRESS PANEL ===== -->
+  <section id="progress-panel" class="card hidden">
+    <div class="progress-header">
+      <span id="phase-label" class="phase-label">Initializing...</span>
+      <span id="percent-label" class="percent-label">0%</span>
+    </div>
+    <div class="progress-bar-container">
+      <div id="progress-bar" class="progress-bar" style="width:0%"></div>
+    </div>
+    <div id="log-feed" class="log-feed"></div>
+  </section>
+
+  <!-- ===== RESULTS PANEL ===== -->
+  <section id="results-panel" class="hidden">
+    <div class="results-header">
+      <h2>Results <span id="result-count" class="result-count">0</span> products ranked</h2>
+      <button id="export-btn" class="btn btn-primary">Export to Excel</button>
+    </div>
+    <div id="results-grid" class="results-grid"></div>
+  </section>
+
+</div><!-- /.container -->
+
+<script>
+// ============================================================
+// State
+// ============================================================
+let currentJobId = null;
+let authEventSource = null;
+let isAuthenticated = false;
+let weightsValid = true;
+
+// ============================================================
+// Utilities
+// ============================================================
+function $(id) { return document.getElementById(id); }
+
+function formatRWF(n) {
+  if (n == null || isNaN(n)) return 'N/A';
+  return 'RWF ' + Math.round(n).toLocaleString();
+}
+
+function truncate(str, n) {
+  if (!str) return '';
+  return str.length > n ? str.slice(0, n) + '…' : str;
+}
+
+function formatSales(n) {
+  if (n == null) return '0';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return String(n);
+}
+
+function scoreClass(score) {
+  if (score >= 70) return 'score-high';
+  if (score >= 45) return 'score-mid';
+  return 'score-low';
+}
+
+// ============================================================
+// Auth
+// ============================================================
+async function checkAuthStatus() {
+  try {
+    const res = await fetch('/auth/status');
+    const data = await res.json();
+    const banner = $('auth-banner');
+    const text = $('auth-status-text');
+
+    isAuthenticated = data.exists;
+
+    if (data.exists) {
+      banner.className = 'auth-banner auth-ok';
+      const hrs = data.age_hours;
+      const timeStr = hrs < 1
+        ? `${Math.round(hrs * 60)} minutes ago`
+        : hrs < 24
+          ? `${hrs.toFixed(1)} hours ago`
+          : `${Math.floor(hrs / 24)} days ago`;
+      text.textContent = `Session active — saved ${timeStr}`;
+    } else {
+      banner.className = 'auth-banner auth-error';
+      text.textContent = 'No session found — please authenticate before searching.';
+    }
+    updateRunButton();
+  } catch (e) {
+    console.error('Auth status check failed:', e);
+  }
+}
+
+$('auth-btn').addEventListener('click', () => {
+  $('auth-modal').classList.remove('hidden');
+  $('auth-log').innerHTML = '';
+  startAuthStream();
+});
+
+$('auth-cancel-btn').addEventListener('click', () => {
+  $('auth-modal').classList.add('hidden');
+  if (authEventSource) { authEventSource.close(); authEventSource = null; }
+});
+
+$('auth-done-btn').addEventListener('click', async () => {
+  try {
+    await fetch('/auth/confirm', { method: 'POST' });
+    appendAuthLog('Session saved. Closing...');
+    setTimeout(() => {
+      $('auth-modal').classList.add('hidden');
+      checkAuthStatus();
+    }, 1500);
+  } catch (e) {
+    appendAuthLog('Error: ' + e.message);
+  }
+});
+
+function startAuthStream() {
+  if (authEventSource) authEventSource.close();
+  fetch('/auth', { method: 'POST' }).then(res => {
+    // The response IS the SSE stream
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    function read() {
+      reader.read().then(({ done, value }) => {
+        if (done) return;
+        const text = decoder.decode(value);
+        text.split('\n').forEach(line => {
+          if (line.startsWith('data: ')) {
+            try {
+              const d = JSON.parse(line.slice(6));
+              if (d.message) appendAuthLog(d.message);
+              if (d.done) appendAuthLog('Browser session saved.');
+            } catch {}
+          }
+        });
+        read();
+      });
+    }
+    read();
+  }).catch(e => appendAuthLog('Failed to start auth: ' + e.message));
+}
+
+function appendAuthLog(msg) {
+  const el = document.createElement('div');
+  el.textContent = msg;
+  $('auth-log').appendChild(el);
+  $('auth-log').scrollTop = $('auth-log').scrollHeight;
+}
+
+// ============================================================
+// Weight sliders
+// ============================================================
+const weightIds = ['w-rating', 'w-sales', 'w-reviews', 'w-price'];
+
+function syncWeightPair(sliderId, numId) {
+  const slider = $(sliderId);
+  const num = $(numId);
+  slider.addEventListener('input', () => { num.value = slider.value; validateWeights(); });
+  num.addEventListener('input', () => { slider.value = num.value; validateWeights(); });
+}
+syncWeightPair('w-rating', 'w-rating-num');
+syncWeightPair('w-sales', 'w-sales-num');
+syncWeightPair('w-reviews', 'w-reviews-num');
+syncWeightPair('w-price', 'w-price-num');
+
+function getWeights() {
+  return weightIds.map(id => parseInt($(id).value) || 0);
+}
+
+function validateWeights() {
+  const total = getWeights().reduce((a, b) => a + b, 0);
+  const badge = $('weight-total-badge');
+  const warn = $('weight-warn');
+  badge.textContent = `Total: ${total}%`;
+  weightsValid = total === 100;
+  if (weightsValid) {
+    badge.className = 'weight-badge weight-ok';
+    warn.classList.add('hidden');
+  } else {
+    badge.className = 'weight-badge weight-err';
+    warn.classList.remove('hidden');
+  }
+  updateRunButton();
+}
+
+$('auto-balance-btn').addEventListener('click', () => {
+  // Distribute evenly: 25/25/25/25 then nudge to 100
+  const vals = [25, 25, 25, 25];
+  // Adjust last to ensure sum = 100
+  vals[3] = 100 - vals[0] - vals[1] - vals[2];
+  weightIds.forEach((id, i) => {
+    $(id).value = vals[i];
+    $(id + '-num').value = vals[i];
+  });
+  validateWeights();
+});
+
+// ============================================================
+// Run button guard
+// ============================================================
+function updateRunButton() {
+  const ok = isAuthenticated && weightsValid;
+  $('run-btn').disabled = !ok;
+}
+
+// ============================================================
+// Search form submission
+// ============================================================
+$('search-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  const negRaw = $('neg-keywords').value;
+  const negKeywords = negRaw.split(',').map(s => s.trim()).filter(Boolean);
+
+  const body = {
+    search_term: $('search-term').value.trim(),
+    negative_keywords: negKeywords,
+    min_sales: parseInt($('min-sales').value) || 0,
+    price_floor_pct: parseFloat($('price-floor').value) || 0,
+    w_rating: parseInt($('w-rating').value) || 0,
+    w_sales: parseInt($('w-sales').value) || 0,
+    w_reviews: parseInt($('w-reviews').value) || 0,
+    w_price: parseInt($('w-price').value) || 0,
+    include_seller_score: $('inc-seller').checked,
+    include_shipping_time: $('inc-shipping').checked,
+    include_choice: $('inc-choice').checked,
+  };
+
+  // Hide previous results
+  $('results-panel').classList.add('hidden');
+  $('results-grid').innerHTML = '';
+
+  // Show progress panel
+  $('progress-panel').classList.remove('hidden');
+  resetProgress();
+  $('run-btn').disabled = true;
+
+  try {
+    const res = await fetch('/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Search failed.');
+    }
+
+    const { job_id } = await res.json();
+    currentJobId = job_id;
+    listenToProgress(job_id);
+
+  } catch (err) {
+    appendLog('ERROR: ' + err.message);
+    $('run-btn').disabled = false;
+    updateRunButton();
+  }
+});
+
+// ============================================================
+// Progress SSE
+// ============================================================
+function resetProgress() {
+  $('progress-bar').style.width = '0%';
+  $('percent-label').textContent = '0%';
+  $('phase-label').textContent = 'Initializing...';
+  $('log-feed').innerHTML = '';
+}
+
+function appendLog(msg) {
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.textContent = msg;
+  $('log-feed').appendChild(line);
+  $('log-feed').scrollTop = $('log-feed').scrollHeight;
+}
+
+function listenToProgress(jobId) {
+  const es = new EventSource(`/progress/${jobId}`);
+
+  es.onmessage = (event) => {
+    let data;
+    try { data = JSON.parse(event.data); } catch { return; }
+
+    if (data.ping) return;
+
+    if (data.message) appendLog(data.message);
+    if (data.phase)   $('phase-label').textContent = data.phase;
+    if (data.percent != null) {
+      $('progress-bar').style.width = data.percent + '%';
+      $('percent-label').textContent = data.percent + '%';
+    }
+
+    if (data.done) {
+      es.close();
+      updateRunButton();
+      if (data.status === 'error') {
+        appendLog('Pipeline failed: ' + (data.error || 'Unknown error'));
+      } else {
+        fetchResults(jobId);
+      }
+    }
+  };
+
+  es.onerror = () => {
+    es.close();
+    appendLog('Connection lost. The pipeline may still be running.');
+    updateRunButton();
+  };
+}
+
+// ============================================================
+// Results
+// ============================================================
+async function fetchResults(jobId) {
+  try {
+    const res = await fetch(`/results/${jobId}`);
+    if (!res.ok) throw new Error('Could not load results.');
+    const products = await res.json();
+    renderResults(products);
+  } catch (e) {
+    appendLog('ERROR loading results: ' + e.message);
+  }
+}
+
+function renderResults(products) {
+  $('result-count').textContent = products.length;
+  $('results-panel').classList.remove('hidden');
+
+  const grid = $('results-grid');
+  grid.innerHTML = '';
+
+  products.forEach((p, idx) => {
+    const score = p.Final_Score ?? 0;
+    const imgSrc = p.Image_URL || p.Image || '/static/placeholder.png';
+
+    const extras = [];
+    if (p.Choice_Badge) extras.push('<span class="tag tag-choice">AliExpress Choice</span>');
+    if (p.Seller_Score != null) extras.push(`<span class="tag tag-seller">Seller ${p.Seller_Score}% positive</span>`);
+    if (p.Shipping_Time) extras.push(`<span class="tag tag-ship">Delivery: ${p.Shipping_Time}</span>`);
+
+    const card = document.createElement('div');
+    card.className = 'product-card';
+    card.innerHTML = `
+      <div class="card-img-wrap">
+        <img src="${imgSrc}" alt="product" loading="lazy" onerror="this.src='/static/placeholder.png'" />
+        <div class="score-badge ${scoreClass(score)}">${score}</div>
+        <div class="rank-badge">#${idx + 1}</div>
+      </div>
+      <div class="card-body">
+        <div class="card-title" title="${p.Title || ''}">${truncate(p.Title || 'Unknown', 65)}</div>
+        <div class="card-price">${formatRWF(p.Total_Cost_RWF)}</div>
+        <div class="card-price-breakdown">
+          Base: ${formatRWF(p.Price)} &nbsp;+&nbsp; Ship: ${formatRWF(p.Shipping_RWF)}
+        </div>
+        <div class="card-meta">
+          <span title="Star rating">⭐ ${p.Rating != null ? p.Rating.toFixed(1) : 'N/A'}</span>
+          <span title="Units sold">🛍 ${formatSales(p.Sales)} sold</span>
+          <span title="Review count">💬 ${p.Review_Count ?? 0}</span>
+        </div>
+        ${extras.length ? `<div class="card-extras">${extras.join('')}</div>` : ''}
+        <a href="${p.URL}" target="_blank" rel="noopener" class="btn btn-view">View on AliExpress</a>
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+
+  // Scroll to results
+  $('results-panel').scrollIntoView({ behavior: 'smooth' });
+}
+
+$('export-btn').addEventListener('click', () => {
+  if (currentJobId) window.location.href = `/export/${currentJobId}`;
+});
+
+// ============================================================
+// Init
+// ============================================================
+checkAuthStatus();
+validateWeights();
+</script>
+</body>
+</html>
