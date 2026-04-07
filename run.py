@@ -36,4 +36,4 @@ if __name__ == "__main__":
     # "app:app" resolves to backend/app.py (via sys.path above).
     # reload=False is intentional: --reload spawns a child process which
     # resets the event loop policy we just set.
-    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=False)
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=False)
