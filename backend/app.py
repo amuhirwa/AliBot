@@ -53,9 +53,9 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 
-from scraper import sweep_search_page
-from deep_dive import analyze_products
-from scorer import score_products
+from backend.scraper import sweep_search_page
+from backend.deep_dive import analyze_products
+from backend.scorer import score_products
 
 from pathlib import Path
 
