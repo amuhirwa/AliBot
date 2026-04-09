@@ -268,7 +268,15 @@ async def start_auth():
                 yield f"data: {json.dumps({'message': text})}\n\n"
         yield f"data: {json.dumps({'done': True})}\n\n"
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @app.post("/auth/confirm")
@@ -303,7 +311,15 @@ async def start_search(req: SearchRequest):
 async def progress(job_id: str):
     if job_id not in job_store:
         raise HTTPException(status_code=404, detail="Job not found.")
-    return StreamingResponse(sse_generator(job_id), media_type="text/event-stream")
+    return StreamingResponse(
+        sse_generator(job_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @app.get("/results/{job_id}")
